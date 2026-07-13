@@ -9,7 +9,7 @@ namespace XDM.Wpf.UI
     {
         private FinishedDownloadItem entry;
 
-        public event PropertyChangedEventHandler PropertyChanged;
+        public event PropertyChangedEventHandler? PropertyChanged;
 
         public FinishedDownloadEntryWrapper(FinishedDownloadItem entry)
         {
@@ -60,7 +60,7 @@ namespace XDM.Wpf.UI
 
         private void OnPropertyChanged(string propName)
         {
-            PropertyChanged(this, new PropertyChangedEventArgs(propName));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propName));
         }
     }
 }

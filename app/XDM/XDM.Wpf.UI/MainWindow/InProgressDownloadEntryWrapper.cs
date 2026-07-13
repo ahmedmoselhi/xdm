@@ -10,7 +10,7 @@ namespace XDM.Wpf.UI
     {
         private readonly InProgressDownloadItem entry;
 
-        public event PropertyChangedEventHandler PropertyChanged;
+        public event PropertyChangedEventHandler? PropertyChanged;
 
         public InProgressDownloadEntryWrapper(InProgressDownloadItem entry)
         {

@@ -12,7 +12,8 @@ namespace XDM.Core.Util
     public static class FileHelper
     {
         public static readonly Regex RxFileWithinQuote = new Regex("\\\"(.*)\\\"");
-        public static string? SanitizeFileName(string fileName)
+        
+        public static string? SanitizeFileName(string? fileName)
         {
             if (fileName == null) return fileName;
             var file = fileName.Split('/').Last();
@@ -40,11 +41,9 @@ namespace XDM.Core.Util
             return Config.Instance.DefaultDownloadFolder;
         }
 
-
-
-        public static bool AddFileExtension(string name, string contentType, out string nameWithExt)
+        public static bool AddFileExtension(string name, string? contentType, out string nameWithExt)
         {
-            name = SanitizeFileName(name);
+            name = SanitizeFileName(name) ?? "";
             if (name.EndsWith("."))
             {
                 name = name.TrimEnd('.');
@@ -85,14 +84,14 @@ namespace XDM.Core.Util
             }
         }
 
-        public static string GetFileName(Uri uri, string contentType = null)
+        public static string GetFileName(Uri uri, string? contentType = null)
         {
             var name = Path.GetFileName(uri.LocalPath);
             if (string.IsNullOrEmpty(name))
             {
                 name = uri.Host.Replace('.', '_');
             }
-            name = SanitizeFileName(name);
+            name = SanitizeFileName(name) ?? "";
             if (string.IsNullOrEmpty(contentType))
             {
                 return name;
@@ -130,7 +129,7 @@ namespace XDM.Core.Util
             return count == 0 ? file : name + "_" + count + ext;
         }
 
-        public static string GetFileNameFromQuote(string text)
+        public static string? GetFileNameFromQuote(string text)
         {
             if (string.IsNullOrEmpty(text))
             {

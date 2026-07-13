@@ -25,15 +25,15 @@ namespace XDM.Core.Downloader.Adaptive.Hls
                 var state = _state as MultiSourceHLSDownloadState;
                 if (state == null)
                 {
-                    return null;
+                    return null!;
                 }
                 if (state.NonMuxedVideoPlaylistUrl != null) return state.NonMuxedVideoPlaylistUrl;
                 if (state.MuxedPlaylistUrl != null) return state.MuxedPlaylistUrl;
-                return null;
+                return null!;
             }
         }
-        public MultiSourceHLSDownloader(MultiSourceHLSDownloadInfo info, IHttpClient http = null,
-            BaseMediaProcessor mediaProcessor = null,
+        public MultiSourceHLSDownloader(MultiSourceHLSDownloadInfo info, IHttpClient? http = null,
+            BaseMediaProcessor? mediaProcessor = null,
             AuthenticationInfo? authentication = null, ProxyInfo? proxy = null) : base(info, http, mediaProcessor)
         {
             var state = new MultiSourceHLSDownloadState
@@ -61,7 +61,7 @@ namespace XDM.Core.Downloader.Adaptive.Hls
             }
             else
             {
-                state.MuxedPlaylistUrl = new Uri(info.VideoUri);
+                state.MuxedPlaylistUrl = new Uri(info.VideoUri ?? "");
                 state.Demuxed = false;
             }
 
@@ -69,7 +69,7 @@ namespace XDM.Core.Downloader.Adaptive.Hls
             this.TargetFileName = FileHelper.SanitizeFileName(info.File);
         }
 
-        public MultiSourceHLSDownloader(string id, IHttpClient http = null, BaseMediaProcessor mediaProcessor = null) : base(id, http, mediaProcessor)
+        public MultiSourceHLSDownloader(string id, IHttpClient? http = null, BaseMediaProcessor? mediaProcessor = null) : base(id, http, mediaProcessor)
         {
         }
 
@@ -368,6 +368,6 @@ namespace XDM.Core.Downloader.Adaptive.Hls
 
     public class MultiSourceHLSDownloadState : MultiSourceDownloadState
     {
-        public Uri MuxedPlaylistUrl, NonMuxedAudioPlaylistUrl, NonMuxedVideoPlaylistUrl;
+        public Uri? MuxedPlaylistUrl, NonMuxedAudioPlaylistUrl, NonMuxedVideoPlaylistUrl;
     }
 }

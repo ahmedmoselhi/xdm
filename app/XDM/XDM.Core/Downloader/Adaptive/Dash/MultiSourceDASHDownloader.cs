@@ -19,11 +19,11 @@ namespace XDM.Core.Downloader.Adaptive.Dash
             get
             {
                 var state = _state as MultiSourceDASHDownloadState;
-                return state == null ? null : new Uri(state.Url);
+                return state == null ? null! : new Uri(state.Url ?? "");
             }
         }
-        public MultiSourceDASHDownloader(MultiSourceDASHDownloadInfo info, IHttpClient http = null,
-            BaseMediaProcessor mediaProcessor = null,
+        public MultiSourceDASHDownloader(MultiSourceDASHDownloadInfo info, IHttpClient? http = null,
+            BaseMediaProcessor? mediaProcessor = null,
             AuthenticationInfo? authentication = null, ProxyInfo? proxy = null) : base(info, http, mediaProcessor)
         {
             var state = new MultiSourceDASHDownloadState
@@ -51,8 +51,8 @@ namespace XDM.Core.Downloader.Adaptive.Dash
 
             if (state.Demuxed)
             {
-                state.AudioChunkCount = info.AudioSegments.Count;
-                state.VideoChunkCount = info.VideoSegments.Count;
+                state.AudioChunkCount = info.AudioSegments!.Count;
+                state.VideoChunkCount = info.VideoSegments!.Count;
 
                 state.AudioSegments = info.AudioSegments;
                 state.VideoSegments = info.VideoSegments;
@@ -65,56 +65,20 @@ namespace XDM.Core.Downloader.Adaptive.Dash
 
                 CreateChunks2(state, _chunks, _chunkStreamMap);
 
-                //for (; i < Math.Min(this._state.AudioChunkCount, this._state.VideoChunkCount); i++)
-                //{
-                //    var chunk1 = CreateChunk(info.VideoSegments[i], 0);
-                //    _chunks.Add(chunk1);
-                //    _chunkStreamMap.StreamMap[chunk1.Id] = Path.Combine(_state.TempDirectory, "1_" + chunk1.Id + FileHelper.GetFileName(chunk1.Uri));
-
-                //    var chunk2 = CreateChunk(info.AudioSegments[i], 1);
-                //    _chunks.Add(chunk2);
-                //    _chunkStreamMap.StreamMap[chunk2.Id] = Path.Combine(_state.TempDirectory, "2_" + chunk2.Id + FileHelper.GetFileName(chunk2.Uri));
-                //}
-                //for (; i < this._state.VideoChunkCount; i++)
-                //{
-                //    var chunk = CreateChunk(info.VideoSegments[i], 0);
-                //    _chunks.Add(chunk);
-                //    _chunkStreamMap.StreamMap[chunk.Id] = Path.Combine(_state.TempDirectory, "1_" + chunk.Id + FileHelper.GetFileName(chunk.Uri));
-                //}
-                //for (; i < this._state.AudioChunkCount; i++)
-                //{
-                //    var chunk = CreateChunk(info.AudioSegments[i], 1);
-                //    _chunks.Add(chunk);
-                //    _chunkStreamMap.StreamMap[chunk.Id] = Path.Combine(_state.TempDirectory, "2_" + chunk.Id + FileHelper.GetFileName(chunk.Uri));
-                //}
-
                 var ext = FileExtensionHelper.GetExtensionFromMimeType(info.VideoMimeType) ??
                     FileExtensionHelper.GuessContainerFormatFromSegmentExtension(state.VideoContainerFormat);
 
-                //if (!(string.IsNullOrWhiteSpace(state.VideoContainerFormat) || state.VideoContainerFormat == "."))
-                //{
-                //    ext = Helpers.GetExtensionFromMimeType(info.VideoMimeType)
-                //    ?? Helpers.GuessContainerFormatFromSegmentExtension(
-                //        state.VideoContainerFormat.ToLowerInvariant(), true);
-                //}
                 TargetFileName = Path.GetFileNameWithoutExtension(TargetFileName ?? "video")
                         + ext;
             }
             else
             {
                 var segments = info.VideoSegments ?? info.AudioSegments;
-                state.VideoChunkCount = segments.Count;
+                state.VideoChunkCount = segments!.Count;
                 state.VideoSegments = segments;
                 state.Duration = info.Duration;
 
                 CreateChunks1(state, _chunks, _chunkStreamMap);
-
-                //for (; i < this._state.VideoChunkCount; i++)
-                //{
-                //    var chunk = CreateChunk(segments[i], 0);
-                //    _chunks.Add(chunk);
-                //    _chunkStreamMap.StreamMap[chunk.Id] = Path.Combine(_state.TempDirectory, "1_" + chunk.Id + FileHelper.GetFileName(chunk.Uri));
-                //}
 
                 state.VideoContainerFormat = GuessContainerFormatFromPlaylist(segments);
                 var ext = FileExtensionHelper.GuessContainerFormatFromSegmentExtension(
@@ -124,8 +88,8 @@ namespace XDM.Core.Downloader.Adaptive.Dash
             }
         }
 
-        public MultiSourceDASHDownloader(string id, IHttpClient http = null,
-            BaseMediaProcessor mediaProcessor = null) : base(id, http, mediaProcessor)
+        public MultiSourceDASHDownloader(string id, IHttpClient? http = null,
+            BaseMediaProcessor? mediaProcessor = null) : base(id, http, mediaProcessor)
         {
 
         }
@@ -147,7 +111,6 @@ namespace XDM.Core.Downloader.Adaptive.Dash
         protected override void Init(string tempDir)
         {
             //Nothing to do here
-            //return Task.FromResult(string.Empty);// new  Task.CompletedTask;
         }
 
         protected override void OnContentTypeReceived(Chunk chunk, string contentType)
@@ -159,44 +122,17 @@ namespace XDM.Core.Downloader.Adaptive.Dash
             var state = DownloadStateIO.LoadMultiSourceDASHDownloadState(Id!);
             this._state = state;
 
-            //var bytes = TransactedIO.ReadBytes(Id + ".state", Config.DataDir);
-            //if (bytes == null)
-            //{
-            //    throw new FileNotFoundException(Path.Combine(Config.DataDir, Id + ".state"));
-            //}
-
-            //var state = DownloadStateStore.MultiSourceDASHDownloadStateFromBytes(bytes);
-            //this._state = state;
-
-            //var text = TransactedIO.Read(Id + ".state", Config.DataDir);
-            //if (text == null)
-            //{
-            //    throw new FileNotFoundException(Path.Combine(Config.DataDir, Id + ".state"));
-            //}
-            ////since all information is available in constructor we assume chunk restore can not fail
-            //var state = JsonConvert.DeserializeObject<MultiSourceDASHDownloadState>(
-            //                     text);
-            //this._state = state;
-
             try
             {
                 Log.Debug("Restoring chunks from: " + Path.Combine(_state.TempDirectory, "chunks.db"));
 
                 if (!TransactedIO.ReadStream("chunks.db", state.TempDirectory, s =>
                 {
-                    _chunks = ChunkStateFromBytes(s);// pieces = ChunkStateFromBytes(s);
+                    _chunks = ChunkStateFromBytes(s);
                 }))
                 {
                     throw new FileNotFoundException(Path.Combine(state.TempDirectory, "chunks.db"));
                 }
-
-                //var bytes2 = TransactedIO.ReadBytes("chunks.db", _state.TempDirectory);
-                //if (bytes2 == null)
-                //{
-                //    throw new FileNotFoundException(Path.Combine(_state.TempDirectory, "chunks.json"));
-                //}
-
-                //_chunks = ChunkStateFromBytes(bytes2);
 
                 var dashDir = _state.TempDirectory;
                 var streamMap = _chunks.Select(c => new
@@ -238,28 +174,8 @@ namespace XDM.Core.Downloader.Adaptive.Dash
         protected override void SaveState()
         {
             DownloadStateIO.Save((MultiSourceDASHDownloadState)_state);
-            //TransactedIO.WriteBytes(DownloadStateStore.Save((MultiSourceDASHDownloadState)_state), Id + ".state", Config.DataDir);
-            //TransactedIO.Write(JsonConvert.SerializeObject(_state as MultiSourceDASHDownloadState),
-            //    Id + ".state", Config.DataDir);
-
-            //File.WriteAllText(Path.Combine(Config.DataDir, Id + ".state"),
-            //    JsonConvert.SerializeObject(_state as MultiSourceDASHDownloadState));
             SaveChunkState();
         }
-
-        //private ISet<string> GetAllHosts(params List<Uri>[] args)
-        //{
-        //    var set = new HashSet<string>();
-        //    foreach (var arg in args)
-        //    {
-        //        if (arg == null) continue;
-        //        foreach (var url in arg)
-        //        {
-        //            set.Add(url.Scheme + "://" + url.Authority + "/");
-        //        }
-        //    }
-        //    return set;
-        //}
 
         private static string GuessContainerFormatFromPlaylist(List<Uri> segments)
         {

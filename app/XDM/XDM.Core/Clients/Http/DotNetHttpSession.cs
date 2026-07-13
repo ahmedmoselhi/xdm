@@ -35,7 +35,7 @@ namespace XDM.Core.Clients.Http
 
         public HttpStatusCode StatusCode => Response!.StatusCode;
 
-        public Uri ResponseUri => Response!.RequestMessage!.RequestUri;
+        public Uri ResponseUri => Response!.RequestMessage!.RequestUri!;
 
         public void Abort()
         {
@@ -68,9 +68,9 @@ namespace XDM.Core.Clients.Http
             return Response!.Content.ReadAsStreamAsync(this.CancellationToken).Result;
         }
 
-        public string? ReadAsString(CancelFlag cancellationToken)
+        public string ReadAsString(CancelFlag cancellationToken)
         {
-            return Response?.Content.ReadAsStringAsync(this.CancellationToken).Result;
+            return Response?.Content.ReadAsStringAsync(this.CancellationToken).Result ?? string.Empty;
         }
 
         public void EnsureSuccessStatusCode()
