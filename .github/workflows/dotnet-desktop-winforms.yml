@@ -55,10 +55,20 @@ jobs:
           -p:EnableWindowsTargeting=true
 
       - name: Test unit project
-        run: dotnet test $env:UNIT_TEST_PROJECT_PATH --configuration $env:CONFIGURATION
+        run: >-
+          dotnet test $env:UNIT_TEST_PROJECT_PATH
+          --configuration $env:CONFIGURATION
+          --no-build
+          -p:Platform=$env:PLATFORM
+          --logger "console;verbosity=normal"
 
       - name: Test system project
-        run: dotnet test $env:SYSTEM_TEST_PROJECT_PATH --configuration $env:CONFIGURATION
+        run: >-
+          dotnet test $env:SYSTEM_TEST_PROJECT_PATH
+          --configuration $env:CONFIGURATION
+          --no-build
+          -p:Platform=$env:PLATFORM
+          --logger "console;verbosity=normal"
 
       - name: Publish
         run: >-
