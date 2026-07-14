@@ -1,0 +1,156 @@
+name: .NET Desktop Release
+
+on:
+  push:
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to upload the build artifact to (for example, v8.0.18)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.artifact_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            platform: x86
+            rid: win-x86
+            target_framework: net10.0-windows
+            artifact_name: xdm-windows-x86
+          - os: ubuntu-latest
+            platform: x64
+            rid: linux-x64
+            target_framework: net10.0
+            artifact_name: xdm-linux-x64
+          - os: macos-latest
+            platform: x64
+            rid: osx-x64
+            target_framework: net10.0
+            artifact_name: xdm-osx-x64
+
+    env:
+      DOTNET_VERSION: 10.0.x
+      CONFIGURATION: Release
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4.2.0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4.1.0
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Parse Version Definition
+      id: parse_version
+      shell: bash
+      run: |
+        VERSION="8.0.18"
+        if [[ "${{ env.RELEASE_TAG }}" =~ v?([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+          VERSION="${BASH_REMATCH[1]}"
+        fi
+        echo "BUILD_VER=${VERSION}" >> $GITHUB_ENV
+
+    - name: Build Windows Installer (MSI) via make-msi.bat
+      if: matrix.os == 'windows-latest'
+      shell: cmd
+      env:
+        BUILD_VER: ${{ env.BUILD_VER }}
+      run: |
+        :: Locate WiX Toolset on the runner environment
+        set "WIX_PATH=C:\Program Files (x86)\WiX Toolset v3.11\bin"
+        if not exist "%WIX_PATH%" set "WIX_PATH=C:\Program Files (x86)\WiX Toolset v3.14\bin"
+        if not exist "%WIX_PATH%" (
+            echo Error: WiX Toolset could not be located on this runner.
+            exit /b 1
+        )
+        set "PATH=%WIX_PATH%;%PATH%"
+
+        :: Navigate directly to the installer folder where make-msi.bat is located
+        cd app\XDM\XDM.Win.Installer
+
+        :: Extract blobs.zip containing ffmpeg-x86.exe and youtube-dl.exe
+        if exist blobs.zip (
+            powershell -Command "Expand-Archive -Path blobs.zip -DestinationPath . -Force"
+        )
+
+        :: Copy extracted executables to the BIN folder before running the .bat script
+        if not exist BIN mkdir BIN
+        if exist ffmpeg-x86.exe copy /B /Y ffmpeg-x86.exe BIN\
+        if exist youtube-dl.exe copy /B /Y youtube-dl.exe BIN\
+
+        :: Ensure fallback placeholders exist to prevent linker errors if missing from repo
+        if not exist icon.ico echo. > icon.ico
+        if not exist gpl-3.0.rtf echo GNU GPL v3 Placeholder > gpl-3.0.rtf
+        if not exist ffmpeg-x86.exe echo. > ffmpeg-x86.exe
+        if not exist youtube-dl.exe echo. > youtube-dl.exe
+
+        :: Execute the standalone packaging script
+        call make-msi.bat
+
+        :: Copy generated output asset to global artifact staging area
+        mkdir ..\..\..\artifacts 2>nul
+        copy xdmsetup-%BUILD_VER%-x86.msi ..\..\..\artifacts\
+
+    - name: Publish Linux/Mac Applications
+      if: matrix.os != 'windows-latest'
+      run: |
+        dotnet publish app/XDM/XDM.Gtk.UI/XDM.Gtk.UI.csproj --configuration Release --framework ${{ matrix.target_framework }} --output artifacts/${{ matrix.artifact_name }} -r ${{ matrix.rid }} --no-self-contained -p:PublishTrimmed=false
+
+    - name: Package Linux/Mac Workspace Artifacts
+      if: matrix.os != 'windows-latest'
+      shell: bash
+      run: |
+        mkdir -p artifacts
+        cd artifacts
+        zip -r "${{ matrix.artifact_name }}.zip" "${{ matrix.artifact_name }}"
+
+    - name: Upload Runner Workflow Artifacts
+      uses: actions/upload-artifact@v4.4.0
+      with:
+        name: ${{ matrix.artifact_name }}-artifacts
+        path: |
+          artifacts/*.msi
+          artifacts/*.zip
+        if-no-files-found: warn
+
+  release:
+    name: Publish Release Deliverables
+    needs: [build]
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+
+    steps:
+    - name: Download All Build Artifacts
+      uses: actions/download-artifact@v4.1.8
+      with:
+        path: artifacts
+        merge-multiple: true
+
+    - name: Upload Release Deliverables
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        echo "Publishing deliverables to release: ${{ env.RELEASE_TAG }}"
+        for file in artifacts/*.msi artifacts/*.zip; do
+          if [ -f "$file" ]; then
+            echo "Uploading $file..."
+            gh release upload "${{ env.RELEASE_TAG }}" "$file" --clobber
+          fi
+        done
