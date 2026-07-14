@@ -1,0 +1,326 @@
+name: .NET Desktop Release
+
+on:
+  push:
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to upload the build artifact to (for example, v1.0.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.artifact_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            platform: x86
+            rid: win-x86
+            target_framework: net10.0-windows
+            artifact_name: xdm-windows-x86
+            project_path: app/XDM/XDM.Wpf.UI/XDM.Wpf.UI.csproj
+          - os: windows-latest
+            platform: x64
+            rid: win-x64
+            target_framework: net10.0-windows
+            artifact_name: xdm-windows-x64
+            project_path: app/XDM/XDM.Wpf.UI/XDM.Wpf.UI.csproj
+          - os: ubuntu-latest
+            platform: x64
+            rid: linux-x64
+            target_framework: net10.0
+            artifact_name: xdm-linux-x64
+            project_path: app/XDM/XDM.Gtk.UI/XDM.Gtk.UI.csproj
+          - os: macos-latest
+            platform: x64
+            rid: osx-x64
+            target_framework: net10.0
+            artifact_name: xdm-osx-x64
+            project_path: app/XDM/XDM.Gtk.UI/XDM.Gtk.UI.csproj
+
+    env:
+      DOTNET_VERSION: 10.0.x
+      PROJECT_PATH: ${{ matrix.project_path }}
+      HOST_PROJECT_PATH: app/XDM/XDM.App.Host/XDM.App.Host.csproj
+      UNIT_TEST_PROJECT_PATH: app/XDM/XDM.Tests/XDM.Tests.csproj
+      SYSTEM_TEST_PROJECT_PATH: app/XDM/XDM_Tests/XDM.SystemTests.csproj
+      CONFIGURATION: Release
+      PUBLISH_DIR: artifacts/${{ matrix.artifact_name }}
+      ZIP_PATH: artifacts/${{ matrix.artifact_name }}.zip
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4.2.0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4.1.0
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore Main and Host Projects
+      run: |
+        dotnet restore ${{ env.PROJECT_PATH }} -p:Platform=${{ matrix.platform }} -p:TargetFramework=${{ matrix.target_framework }} -p:RuntimeIdentifier=${{ matrix.rid }}
+        dotnet restore ${{ env.HOST_PROJECT_PATH }} -p:Platform=${{ matrix.platform }} -p:TargetFramework=${{ matrix.target_framework }} -p:RuntimeIdentifier=${{ matrix.rid }}
+
+    - name: Build Main and Host Projects
+      run: |
+        dotnet build ${{ env.PROJECT_PATH }} --configuration ${{ env.CONFIGURATION }} --framework ${{ matrix.target_framework }} --no-restore -p:Platform=${{ matrix.platform }}
+        dotnet build ${{ env.HOST_PROJECT_PATH }} --configuration ${{ env.CONFIGURATION }} --framework ${{ matrix.target_framework }} --no-restore -p:Platform=${{ matrix.platform }}
+
+    - name: Test unit project
+      if: matrix.os == 'windows-latest'
+      run: >-
+        dotnet test ${{ env.UNIT_TEST_PROJECT_PATH }} --configuration ${{ env.CONFIGURATION }} --no-build -p:Platform=${{ matrix.platform }} --logger "console;verbosity=normal"
+
+    - name: Test system project
+      if: matrix.os == 'windows-latest'
+      run: >-
+        dotnet test ${{ env.SYSTEM_TEST_PROJECT_PATH }} --configuration ${{ env.CONFIGURATION }} --no-build -p:Platform=${{ matrix.platform }} --logger "console;verbosity=normal"
+
+    - name: Publish Main Application
+      run: >-
+        dotnet publish ${{ env.PROJECT_PATH }} --configuration ${{ env.CONFIGURATION }} --framework ${{ matrix.target_framework }} --output ${{ env.PUBLISH_DIR }} -r ${{ matrix.rid }} --no-self-contained --no-restore -p:Platform=${{ matrix.platform }} -p:PublishTrimmed=false
+
+    - name: Publish Native App Host Component
+      run: >-
+        dotnet publish ${{ env.HOST_PROJECT_PATH }} --configuration ${{ env.CONFIGURATION }} --framework ${{ matrix.target_framework }} --output "${{ env.PUBLISH_DIR }}/XDM.App.Host" -r ${{ matrix.rid }} --self-contained true --no-restore -p:Platform=${{ matrix.platform }}
+
+    - name: Package artifact
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path (Split-Path "${{ env.ZIP_PATH }}") | Out-Null
+        if (Test-Path "${{ env.ZIP_PATH }}") { Remove-Item "${{ env.ZIP_PATH }}" -Force }
+        Compress-Archive -Path "${{ env.PUBLISH_DIR }}/*" -DestinationPath "${{ env.ZIP_PATH }}"
+
+    - name: Build Windows Installer (MSI) using WiX
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      env:
+        RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        PUBLISH_DIR: ${{ env.PUBLISH_DIR }}
+        PLATFORM: ${{ matrix.platform }}
+      run: |
+        # Locate WiX Toolset on the runner
+        $wixPath = "C:\Program Files (x86)\WiX Toolset v3.11\bin"
+        if (-not (Test-Path $wixPath)) {
+            $wixPath = "C:\Program Files (x86)\WiX Toolset v3.14\bin"
+        }
+        if (-not (Test-Path $wixPath)) {
+            Write-Error "WiX Toolset not found on runner."
+            exit 1
+        }
+        $env:PATH = "$wixPath;$env:PATH"
+
+        # Determine release version safely using env variable
+        $buildVer = "1.0.0"
+        if ($env:RELEASE_TAG -match 'v?(\d+\.\d+\.\d+)') {
+            $buildVer = $Matches[1]
+        }
+        $env:BUILD_VER = $buildVer
+
+        # Create missing asset placeholders referenced by .wxs if not in repository
+        if (-not (Test-Path "gpl-3.0.rtf")) { Set-Content -Path "gpl-3.0.rtf" -Value "GNU GPL v3 License Agreement Placeholder" }
+        if (-not (Test-Path "icon.ico")) { New-Item -Path "icon.ico" -ItemType File | Out-Null }
+
+        # Write Product WiX Configuration
+        $productWxs = @'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <?define ProductVersion = "$(env.BUILD_VER)"?>
+        <?define ProductUpgradeCode="3E462F34-3D19-4247-AD64-1B74703555D6"?>
+        <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"  xmlns:ui="http://schemas.microsoft.com/wix/UIExtension">
+          <Product Id="*" Name="Xtreme Download Manager" Codepage="utf-32" Language="1033" Version="$(var.ProductVersion)" Manufacturer="Subhra Das Gupta" UpgradeCode="$(var.ProductUpgradeCode)">
+            <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
+
+            <Upgrade Id="$(var.ProductUpgradeCode)">
+              <UpgradeVersion Minimum="$(var.ProductVersion)" OnlyDetect="yes" Property="NEWERVERSIONDETECTED"></UpgradeVersion>
+              <UpgradeVersion Minimum="0.0.0" Maximum="$(var.ProductVersion)" IncludeMinimum="yes" IncludeMaximum="no" Property="OLDERVERSIONBEINGUPGRADED"></UpgradeVersion>
+            </Upgrade>
+
+            <Condition Message="A newer or same version of this software is already istalled">
+              NOT NEWERVERSIONDETECTED
+            </Condition>
+          
+          <Condition Message="This setup is only supported on Windows 10 or higher. To install XDM on Win7 or Win8 please install the appropriate installer from https://xtremedownloadmanager.com">
+            <![CDATA[Installed OR (VersionNT > 602)]]>
+          </Condition>
+          
+          <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open Xtreme Download Manager" />
+          <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1"/>
+          
+          <WixVariable Id="WixUILicenseRtf" Value="gpl-3.0.rtf" />
+          <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+          
+          <UI>
+                <UIRef Id="WixUI_InstallDir" />
+                <Publish Dialog="ExitDialog" 
+                    Control="Finish" 
+                    Event="DoAction" 
+                    Value="LaunchXDM">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
+            </UI>
+          
+            <InstallExecuteSequence>
+              <RemoveExistingProducts After="InstallValidate" />
+            </InstallExecuteSequence>
+
+            <MediaTemplate EmbedCab="yes" CompressionLevel="high"  />
+          
+          <Feature Id="ProductFeature" Title="XDM" Level="1">
+              <ComponentGroupRef Id="ProductComponents" />
+              <ComponentGroupRef Id="XDM" />
+              <ComponentRef Id="StartMenuShortcut" />
+              <ComponentRef Id="ProgramShortcut" />
+              <ComponentRef Id="DesktopShortcut" />
+            </Feature>
+
+            <CustomAction Id="LaunchXDM"  Directory="INSTALLFOLDER" ExeCommand='"[INSTALLFOLDER]xdm-app.exe" --first-run'  Return="asyncNoWait" Impersonate="yes"/>
+
+          </Product>
+
+          <Fragment>
+            <Directory Id="TARGETDIR" Name="SourceDir">
+              <Directory Id="ProgramFilesFolder">
+                <Directory Id="INSTALLFOLDER" Name="XDM">
+                </Directory>
+              </Directory>
+              <Directory Id="DesktopFolder"/>
+              <Directory Id="ProgramMenuFolder">
+                <Directory Id="ProgramMenuSubFolder" Name="Xtreme Download Manager"></Directory>
+              </Directory>
+            </Directory>
+          </Fragment>
+
+          <Fragment>
+            <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+            <Component Id="RegistryEntries" Guid="*">
+                <RegistryKey Root="HKCU"
+                             Key="Software\Microsoft\Windows\CurrentVersion\Run">
+                    <RegistryValue Type="string" Name="XDM" Value='"[INSTALLFOLDER]xdm-app.exe" --background'/>
+                </RegistryKey>
+            <RegistryKey Root="HKCR"
+                             Key="xdm-app">
+                    <RegistryValue Type="string" Value='URL:Xtreme Download Manger'/>
+              <RegistryValue Type="string" Name='URL Protocol' Value='' />
+                </RegistryKey>
+            <RegistryKey Root="HKCR"
+                             Key="xdm-app\shell\open\command">
+                    <RegistryValue Type="string" Value='"[INSTALLFOLDER]xdm-app.exe" "%1"'/>
+                </RegistryKey>
+            </Component>
+            </ComponentGroup>
+          </Fragment>
+
+          <Fragment>
+            <Icon Id="AppIcon" SourceFile="icon.ico"/>
+            <DirectoryRef Id="ProgramMenuSubFolder">
+              <Component Id="StartMenuShortcut" Guid="4c5c4bce-2625-4aa0-8741-a5ab43168cef">
+                <Shortcut Id="AppStartMenuShortcut" Name="Xtreme Download Manager" Icon="AppIcon" WorkingDirectory="INSTALLFOLDER" Target='[INSTALLFOLDER]xdm-app.exe'  Advertise="no"></Shortcut>
+                <RegistryValue Root="HKCU" Key="Software\Xtreme Download Manager" Name="Installed1" Type="integer" Value="1" KeyPath="yes"/>
+                <RemoveFolder Id="ProgramMenuSubFolder" On="uninstall"/>
+              </Component>
+            </DirectoryRef>
+            <DirectoryRef Id="INSTALLFOLDER">
+              <Component Id="ProgramShortcut" Guid="4c5c4bce-2625-4aa0-8741-a5ab53168cef">
+                <Shortcut Id="AppShortcut" Name="Xtreme Download Manager" Icon="AppIcon" WorkingDirectory="INSTALLFOLDER" Target='[INSTALLFOLDER]xdm-app.exe'  Advertise="no"></Shortcut>
+                <RegistryValue Root="HKLM" Key="Software\Xtreme Download Manager" Name="Installed2" Type="integer" Value="1" KeyPath="yes"/>
+              </Component>
+            </DirectoryRef>
+            <DirectoryRef Id="DesktopFolder">
+              <Component Id="DesktopShortcut" Guid="4c5c4bce-2625-4aa0-8741-a5ab53268cef">
+                <Shortcut Id="AppDesktopShortcut"  Name="Xtreme Download Manager" Icon="AppIcon" WorkingDirectory="INSTALLFOLDER" Target='[INSTALLFOLDER]xdm-app.exe'  Advertise="no"></Shortcut>
+                <RegistryValue Root="HKCU" Key="Software\Xtreme Download Manager" Name="Installed3" Type="integer" Value="1" KeyPath="yes"/>
+              </Component>
+            </DirectoryRef>
+          </Fragment>
+        </Wix>
+        '@
+        Set-Content -Path "Product.wxs" -Value $productWxs -Encoding utf8
+
+        # Create a clean temporary mapping folder to satisfy SourceDir references in WiX Fragment
+        if (Test-Path "wix_temp") { Remove-Item "wix_temp" -Recurse -Force }
+        New-Item -ItemType Directory -Force -Path "wix_temp/SourceDir" | Out-Null
+        Copy-Item -Path "$env:PUBLISH_DIR/*" -Destination "wix_temp/SourceDir" -Recurse -Force
+
+        # Dynamically harvest all published files using WiX Heat Tool to generate Components.wxs
+        heat.exe dir "wix_temp\SourceDir" -gg -srd -scom -sreg -cg XDM -dr INSTALLFOLDER -var var.SourceDir -out Components.wxs
+
+        # Run Candle and Light compiler/linker
+        candle.exe -dBUILD_VER=$env:BUILD_VER -dSourceDir="wix_temp\SourceDir" Product.wxs Components.wxs
+        light.exe -ext WixUIExtension Product.wixobj Components.wixobj -b "wix_temp\SourceDir" -o "artifacts/xdm-setup-$env:PLATFORM.msi"
+
+    - name: Build Debian Package
+      if: matrix.os == 'ubuntu-latest'
+      env:
+        RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        PUBLISH_DIR: ${{ env.PUBLISH_DIR }}
+      run: |
+        # Create Debian structure
+        mkdir -p deb-package/DEBIAN
+        mkdir -p deb-package/usr/bin
+        mkdir -p deb-package/usr/lib/xdm
+
+        # Populate with application output files
+        cp -r $PUBLISH_DIR/* deb-package/usr/lib/xdm/
+
+        # Create launching executable script
+        cat << 'EOF' > deb-package/usr/bin/xdm-app
+        #!/bin/bash
+        exec /usr/lib/xdm/xdm-app "$@"
+        EOF
+        chmod +x deb-package/usr/bin/xdm-app
+
+        # Parse and define version semantic rules
+        VERSION="1.0.0"
+        if [[ "$RELEASE_TAG" =~ v?([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+          VERSION="${BASH_REMATCH[1]}"
+        fi
+
+        # Generate standard packaging information file
+        cat << EOF > deb-package/DEBIAN/control
+        Package: xtreme-download-manager
+        Version: $VERSION
+        Architecture: amd64
+        Maintainer: Subhra Das Gupta
+        Description: Xtreme Download Manager
+        EOF
+
+        # Compile Package
+        dpkg-deb --build deb-package artifacts/xdm-linux-x64.deb
+
+    - name: Upload workflow artifact
+      uses: actions/upload-artifact@v4.4.0
+      with:
+        name: ${{ matrix.artifact_name }}-artifacts
+        path: |
+          ${{ env.ZIP_PATH }}
+          artifacts/*.msi
+          artifacts/*.deb
+        if-no-files-found: warn
+
+    - name: Upload artifact to release
+      if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        # Upload the compressed zip release asset
+        gh release upload "${{ env.RELEASE_TAG }}" "${{ env.ZIP_PATH }}" --clobber
+        
+        # Upload Windows MSI installer asset if it was generated
+        if [ -f "artifacts/xdm-setup-${{ matrix.platform }}.msi" ]; then
+          gh release upload "${{ env.RELEASE_TAG }}" "artifacts/xdm-setup-${{ matrix.platform }}.msi" --clobber
+        fi
+        
+        # Upload Linux DEB packaging installer if it was generated
+        if [ -f "artifacts/xdm-linux-x64.deb" ]; then
+          gh release upload "${{ env.RELEASE_TAG }}" "artifacts/xdm-linux-x64.deb" --clobber
+        fi
