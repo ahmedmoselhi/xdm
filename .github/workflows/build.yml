@@ -32,11 +32,6 @@ jobs:
             rid: linux-x64
             target_framework: net10.0
             artifact_name: xdm-linux-x64
-          - os: macos-latest
-            platform: x64
-            rid: osx-x64
-            target_framework: net10.0
-            artifact_name: xdm-osx-x64
 
     env:
       DOTNET_VERSION: 10.0.x
@@ -103,18 +98,63 @@ jobs:
         mkdir ..\..\..\artifacts 2>nul
         copy xdmsetup-%BUILD_VER%-x86.msi ..\..\..\artifacts\
 
-    - name: Publish Linux/Mac Applications
-      if: matrix.os != 'windows-latest'
-      run: |
-        dotnet publish app/XDM/XDM.Gtk.UI/XDM.Gtk.UI.csproj --configuration Release --framework ${{ matrix.target_framework }} --output artifacts/${{ matrix.artifact_name }} -r ${{ matrix.rid }} --no-self-contained -p:PublishTrimmed=false
-
-    - name: Package Linux/Mac Workspace Artifacts
-      if: matrix.os != 'windows-latest'
+    - name: Build Linux Application & Extensions via make-pkg
+      if: matrix.os == 'ubuntu-latest'
       shell: bash
+      env:
+        BUILD_VER: ${{ env.BUILD_VER }}
       run: |
-        mkdir -p artifacts
-        cd artifacts
-        zip -r "${{ matrix.artifact_name }}.zip" "${{ matrix.artifact_name }}"
+        cd app/XDM/XDM.Linux.Installer
+
+        # Check if a native bash version of make-pkg exists; if so, update framework to net10.0 and execute
+        if [ -f "make-pkg" ]; then
+          echo "Found make-pkg script. Updating target framework to net10.0..."
+          sed -i 's/net[0-9]\+\.[0-9]\+/net10.0/g' make-pkg
+          chmod +x make-pkg
+          ./make-pkg
+        elif [ -f "make-pkg.sh" ]; then
+          echo "Found make-pkg.sh script. Updating target framework to net10.0..."
+          sed -i 's/net[0-9]\+\.[0-9]\+/net10.0/g' make-pkg.sh
+          chmod +x make-pkg.sh
+          ./make-pkg.sh
+        else
+          echo "Executing native bash equivalent of make-pkg.bat adapted for net10.0..."
+          rm -rf BIN xdm-helper-chrome binary-source
+          mkdir -p BIN BIN/chrome-extension BIN/ext-loader BIN/XDM.App.Host
+
+          dotnet publish -c Release -f net10.0 -r linux-x64 ../XDM.Gtk.UI/XDM.Gtk.UI.csproj -o BIN
+          dotnet publish -c Release -f net10.0 -r linux-x64 ../XDM.App.Host/XDM.App.Host.csproj -o BIN/XDM.App.Host
+
+          git clone https://github.com/subhra74/xdm-helper-chrome.git
+          cp -r xdm-helper-chrome/chrome/chrome-extension/. BIN/chrome-extension/
+          cp -r xdm-helper-chrome/ext-loader/. BIN/ext-loader/
+        fi
+
+        # Bridge output to binary-source directory as expected by make-deb-pkg
+        rm -rf binary-source
+        cp -r BIN binary-source
+
+    - name: Package Linux Debian (.deb) via make-deb-pkg
+      if: matrix.os == 'ubuntu-latest'
+      shell: bash
+      env:
+        BUILD_VER: ${{ env.BUILD_VER }}
+      run: |
+        cd app/XDM/XDM.Linux.Installer
+
+        # Ensure make-deb-pkg is executable and inject dynamic CI build version
+        if [ -f "make-deb-pkg" ]; then
+          chmod +x make-deb-pkg
+          sed -i "s/^VERSION=.*/VERSION=${BUILD_VER}/" make-deb-pkg
+          ./make-deb-pkg
+        else
+          echo "Error: make-deb-pkg script not found in app/XDM/XDM.Linux.Installer!"
+          exit 1
+        fi
+
+        # Copy generated Debian package to the global artifacts staging directory
+        mkdir -p ../../../artifacts 2>/dev/null || true
+        cp *.deb ../../../artifacts/
 
     - name: Upload Runner Workflow Artifacts
       uses: actions/upload-artifact@v4.4.0
@@ -122,7 +162,7 @@ jobs:
         name: ${{ matrix.artifact_name }}-artifacts
         path: |
           artifacts/*.msi
-          artifacts/*.zip
+          artifacts/*.deb
         if-no-files-found: warn
 
   release:
@@ -136,6 +176,9 @@ jobs:
       RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
 
     steps:
+    - name: Checkout
+      uses: actions/checkout@v4.2.0
+
     - name: Download All Build Artifacts
       uses: actions/download-artifact@v4.1.8
       with:
@@ -146,11 +189,12 @@ jobs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
       run: |
         echo "Publishing deliverables to release: ${{ env.RELEASE_TAG }}"
-        for file in artifacts/*.msi artifacts/*.zip; do
+        for file in artifacts/*.msi artifacts/*.deb; do
           if [ -f "$file" ]; then
             echo "Uploading $file..."
-            gh release upload "${{ env.RELEASE_TAG }}" "$file" --clobber
+            gh release upload "${{ env.RELEASE_TAG }}" "$file" --repo "${{ github.repository }}" --clobber
           fi
         done

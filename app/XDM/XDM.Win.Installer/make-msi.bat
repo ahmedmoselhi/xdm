@@ -1,5 +1,5 @@
 @echo off
-if "%BUILD_VER%"=="" set BUILD_VER=8.0.18
+if "%BUILD_VER%"=="" set BUILD_VER=8.0.26
 
 DEL /s /q *.wixobj
 DEL /s /q net10.0.wxs
