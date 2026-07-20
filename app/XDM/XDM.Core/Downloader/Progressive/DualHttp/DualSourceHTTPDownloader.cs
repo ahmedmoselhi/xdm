@@ -18,9 +18,9 @@ namespace XDM.Core.Downloader.Progressive.DualHttp
         public override string Type => "Dash";
         public override Uri PrimaryUrl => this.state?.Url1 ?? this.state?.Url2;
 
-        public DualSourceHTTPDownloader(DualSourceHTTPDownloadInfo info, IHttpClient hc = null,
+		public DualSourceHTTPDownloader(DualSourceHTTPDownloadInfo info, IHttpClient? hc = null,
             AuthenticationInfo? authentication = null, ProxyInfo? proxy = null,
-            BaseMediaProcessor mediaProcessor = null)
+            BaseMediaProcessor? mediaProcessor = null)
         {
             Id = Guid.NewGuid().ToString();
 
@@ -50,8 +50,8 @@ namespace XDM.Core.Downloader.Progressive.DualHttp
             this.mediaProcessor = mediaProcessor;
         }
 
-        public DualSourceHTTPDownloader(string id, IHttpClient http = null,
-            BaseMediaProcessor mediaProcessor = null)
+        public DualSourceHTTPDownloader(string id, IHttpClient? http = null,
+            BaseMediaProcessor? mediaProcessor = null)
         {
             Id = id;
             cancelFlag = new();

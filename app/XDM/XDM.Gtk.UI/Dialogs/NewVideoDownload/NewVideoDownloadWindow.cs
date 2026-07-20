@@ -47,9 +47,10 @@ namespace XDM.GtkUI.Dialogs.NewVideoDownload
         private int speedLimit = Config.Instance.DefaltDownloadSpeed;
         private bool enableSpeedLimit = Config.Instance.EnableSpeedLimit;
 
-        public event EventHandler DownloadClicked;
+		public event EventHandler DownloadClicked;
         public event EventHandler<DownloadLaterEventArgs> DownloadLaterClicked;
-        public event EventHandler CancelClicked, DestroyEvent, QueueSchedulerClicked, Mp3CheckChanged;
+        public event EventHandler CancelClicked, QueueSchedulerClicked, Mp3CheckChanged;
+        public new event EventHandler DestroyEvent;
         public event EventHandler<FileBrowsedEventArgs> DropdownSelectionChangedEvent;
         public event EventHandler<FileBrowsedEventArgs> FileBrowsedEvent;
 

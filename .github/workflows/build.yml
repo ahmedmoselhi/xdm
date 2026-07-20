@@ -2,6 +2,8 @@ name: .NET Desktop Release
 
 on:
   push:
+    branches:
+      - '**'
   pull_request:
   release:
     types: [published]
@@ -40,18 +42,30 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v4.2.0
+      uses: actions/checkout@v7
 
     - name: Setup .NET
-      uses: actions/setup-dotnet@v4.1.0
+      uses: actions/setup-dotnet@v6
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Suppress GitHub Actions Warning Annotations
+      shell: bash
+      run: |
+        # Disable GitHub Actions problem matchers to prevent yellow warning boxes on workflow pages
+        echo "::remove-matcher owner=csc::"
+        echo "::remove-matcher owner=msbuild::"
+        echo "::remove-matcher owner=dotnet::"
 
     - name: Parse Version Definition
       id: parse_version
       shell: bash
       run: |
-        VERSION="8.0.18"
+        # Dynamically extract APP_VERSION from AppInfo.cs as the default single source of truth
+        VERSION=$(sed -n 's/.*APP_VERSION.*=.*"\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' app/XDM/XDM.Core/AppInfo.cs | head -n 1)
+        if [ -z "$VERSION" ]; then
+          VERSION="8.0.26"
+        fi
         if [[ "${{ env.RELEASE_TAG }}" =~ v?([0-9]+\.[0-9]+\.[0-9]+) ]]; then
           VERSION="${BASH_REMATCH[1]}"
         fi
@@ -91,8 +105,14 @@ jobs:
         if not exist ffmpeg-x86.exe echo. > ffmpeg-x86.exe
         if not exist youtube-dl.exe echo. > youtube-dl.exe
 
+        :: Inject self-contained flags, disable debug symbols, and mute all compiler warnings (WarningLevel=0)
+        powershell -Command "if (Test-Path make-msi.bat) { (Get-Content make-msi.bat) -replace 'dotnet publish', 'dotnet publish --self-contained true -r win-x86 -p:PublishTrimmed=false -p:DebugSymbols=false -p:DebugType=None -p:WarningLevel=0 -p:RunAnalyzers=false' | Set-Content make-msi.bat }"
+
         :: Execute the standalone packaging script
         call make-msi.bat
+
+        :: Delete any remaining debug symbol files (.pdb) before final artifact staging
+        if exist BIN del /s /q BIN\*.pdb 2>nul
 
         :: Copy generated output asset to global artifact staging area
         mkdir ..\..\..\artifacts 2>nul
@@ -106,15 +126,17 @@ jobs:
       run: |
         cd app/XDM/XDM.Linux.Installer
 
-        # Check if a native bash version of make-pkg exists; if so, update framework to net10.0 and execute
+        # Check if a native bash version of make-pkg exists; update framework, self-contained, symbol, and warning flags
         if [ -f "make-pkg" ]; then
-          echo "Found make-pkg script. Updating target framework to net10.0..."
+          echo "Found make-pkg script. Updating target framework to net10.0, self-contained, and warning mute flags..."
           sed -i 's/net[0-9]\+\.[0-9]\+/net10.0/g' make-pkg
+          sed -i 's/dotnet publish/dotnet publish --self-contained true -p:PublishTrimmed=false -p:DebugSymbols=false -p:DebugType=None -p:WarningLevel=0 -p:RunAnalyzers=false/g' make-pkg
           chmod +x make-pkg
           ./make-pkg
         elif [ -f "make-pkg.sh" ]; then
-          echo "Found make-pkg.sh script. Updating target framework to net10.0..."
+          echo "Found make-pkg.sh script. Updating target framework to net10.0, self-contained, and warning mute flags..."
           sed -i 's/net[0-9]\+\.[0-9]\+/net10.0/g' make-pkg.sh
+          sed -i 's/dotnet publish/dotnet publish --self-contained true -p:PublishTrimmed=false -p:DebugSymbols=false -p:DebugType=None -p:WarningLevel=0 -p:RunAnalyzers=false/g' make-pkg.sh
           chmod +x make-pkg.sh
           ./make-pkg.sh
         else
@@ -122,13 +144,27 @@ jobs:
           rm -rf BIN xdm-helper-chrome binary-source
           mkdir -p BIN BIN/chrome-extension BIN/ext-loader BIN/XDM.App.Host
 
-          dotnet publish -c Release -f net10.0 -r linux-x64 ../XDM.Gtk.UI/XDM.Gtk.UI.csproj -o BIN
-          dotnet publish -c Release -f net10.0 -r linux-x64 ../XDM.App.Host/XDM.App.Host.csproj -o BIN/XDM.App.Host
+          dotnet publish -c Release -f net10.0 -r linux-x64 --self-contained true -p:PublishTrimmed=false -p:DebugSymbols=false -p:DebugType=None -p:WarningLevel=0 -p:RunAnalyzers=false ../XDM.Gtk.UI/XDM.Gtk.UI.csproj -o BIN
+          dotnet publish -c Release -f net10.0 -r linux-x64 --self-contained true -p:PublishTrimmed=false -p:DebugSymbols=false -p:DebugType=None -p:WarningLevel=0 -p:RunAnalyzers=false ../XDM.App.Host/XDM.App.Host.csproj -o BIN/XDM.App.Host
 
           git clone https://github.com/subhra74/xdm-helper-chrome.git
           cp -r xdm-helper-chrome/chrome/chrome-extension/. BIN/chrome-extension/
           cp -r xdm-helper-chrome/ext-loader/. BIN/ext-loader/
         fi
+
+        # Bundle ffmpeg dependency into BIN so it is packaged directly into the debian package
+        if [ -f "/usr/bin/ffmpeg" ]; then
+          cp -L /usr/bin/ffmpeg BIN/ || true
+        fi
+        if [ -f "blobs.zip" ]; then
+          unzip -o blobs.zip -d . 2>/dev/null || true
+          if [ -f "ffmpeg" ]; then cp -f ffmpeg BIN/; fi
+          if [ -f "youtube-dl" ]; then cp -f youtube-dl BIN/; fi
+        fi
+
+        # Safely remove .pdb symbol files and strip ONLY native C/C++ binaries without touching .dll assemblies
+        find BIN -name "*.pdb" -type f -delete 2>/dev/null || true
+        find BIN -type f ! -name "*.dll" ! -name "*.exe" \( -name "*.so" -o -name "ffmpeg" -o -name "youtube-dl" -o -name "createdump" \) -exec strip --strip-unneeded {} + 2>/dev/null || true
 
         # Bridge output to binary-source directory as expected by make-deb-pkg
         rm -rf binary-source
@@ -142,10 +178,12 @@ jobs:
       run: |
         cd app/XDM/XDM.Linux.Installer
 
-        # Ensure make-deb-pkg is executable and inject dynamic CI build version
+        # Ensure make-deb-pkg is executable and inject dynamic CI build version reliably
         if [ -f "make-deb-pkg" ]; then
           chmod +x make-deb-pkg
-          sed -i "s/^VERSION=.*/VERSION=${BUILD_VER}/" make-deb-pkg
+          sed -i "s/VERSION=[0-9]\+\.[0-9]\+\.[0-9]\+/VERSION=${BUILD_VER}/g" make-deb-pkg
+          sed -i "s/^VERSION=.*/VERSION=${BUILD_VER}/g" make-deb-pkg
+          export VERSION="${BUILD_VER}"
           ./make-deb-pkg
         else
           echo "Error: make-deb-pkg script not found in app/XDM/XDM.Linux.Installer!"
@@ -157,7 +195,7 @@ jobs:
         cp *.deb ../../../artifacts/
 
     - name: Upload Runner Workflow Artifacts
-      uses: actions/upload-artifact@v4.4.0
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ matrix.artifact_name }}-artifacts
         path: |

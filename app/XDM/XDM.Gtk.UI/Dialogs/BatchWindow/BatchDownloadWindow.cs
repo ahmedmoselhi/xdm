@@ -11,7 +11,6 @@ using XDM.Core.UI;
 using Translations;
 using XDM.Core;
 using XDM.GtkUI.Utils;
-using XDM.Core.UI;
 using XDM.Core.Util;
 
 namespace XDM.GtkUI.Dialogs.BatchWindow

@@ -10,7 +10,6 @@ using XDM.Core;
 using Translations;
 using UI = Gtk.Builder.ObjectAttribute;
 using XDM.GtkUI.Utils;
-using XDM.Core;
 using XDM.Core.Util;
 using TraceLog;
 using XDM.Core.BrowserMonitoring;
